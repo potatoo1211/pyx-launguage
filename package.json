@@ -2,7 +2,7 @@
   "name": "pyx-launguage",
   "displayName": "Pyextended",
   "description": "Extended_Python_launguage",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "engines": {
     "vscode": "^1.106.1"
   },
@@ -35,8 +35,24 @@
         "title": "Pyx: Run and Copy to Clipboard"
       },
       {
+        "command": "pyx.runOnly",
+        "title": "Pyx: Run Only"
+      },
+      {
         "command": "pyx.convertToPython",
         "title": "Pyx: Convert to Python File"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "pyx.runOnly",
+        "key": "F5",
+        "when": "editorTextFocus && resourceLangId == pyx"
+      },
+      {
+        "command": "pyx.runAndCopy",
+        "key": "ctrl+shift+b",
+        "when": "editorTextFocus && resourceLangId == pyx"
       }
     ],
     "menus": {

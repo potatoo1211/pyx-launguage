@@ -1,34 +1,39 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import * as child_process from 'child_process';
 
 export function activate(context: vscode.ExtensionContext) {
 
-    // 拡張機能内の pyx.py のパスを取得
     const scriptPath = path.join(context.extensionPath, 'scripts', 'pyx.py');
 
-    // コマンド1: 実行してクリップボードにコピー
-    let disposableRun = vscode.commands.registerCommand('pyx.runAndCopy', () => {
+    // Helper: ターミナルでコマンドを実行する関数
+    const runInTerminal = (args: string) => {
         const editor = vscode.window.activeTextEditor;
         if (!editor) { return; }
-
         const doc = editor.document;
-        if (doc.languageId !== 'pyx') { return; } // .pyx以外は無視
+        if (doc.languageId !== 'pyx') { return; }
 
         doc.save().then(() => {
             const filePath = doc.fileName;
-            
-            // ターミナルを作成または取得して実行
-            const terminal = vscode.window.activeTerminal || vscode.window.createTerminal("Pyx");
+            // 既存のPyxターミナルがあれば使い回す、なければ作る
+            const terminal = vscode.window.terminals.find(t => t.name === "Pyx") || vscode.window.createTerminal("Pyx");
             terminal.show();
             
-            // python "path/to/pyx.py" "target.pyx" --run --copy
-            // Windows(WSL)パスの扱いを考慮し、単純に文字列で渡す
-            terminal.sendText(`python "${scriptPath}" "${filePath}" --run --copy`);
+            // Windows(WSL)パス対策でパスをクォートで囲む
+            terminal.sendText(`python3 "${scriptPath}" "${filePath}" ${args}`);
         });
+    };
+
+    // コマンド1: 実行してクリップボードにコピー (Ctrl+Shift+B)
+    let disposableRunAndCopy = vscode.commands.registerCommand('pyx.runAndCopy', () => {
+        runInTerminal('--run --copy');
     });
 
-    // コマンド2: Pythonファイルとして出力
+    // コマンド2: 実行のみ (F5)
+    let disposableRunOnly = vscode.commands.registerCommand('pyx.runOnly', () => {
+        runInTerminal('--run');
+    });
+
+    // コマンド3: Pythonファイルとして出力
     let disposableConvert = vscode.commands.registerCommand('pyx.convertToPython', () => {
         const editor = vscode.window.activeTextEditor;
         if (!editor) { return; }
@@ -37,14 +42,14 @@ export function activate(context: vscode.ExtensionContext) {
         doc.save().then(() => {
             const filePath = doc.fileName;
             const outPath = filePath.replace('.pyx', '.py');
-            
-            const terminal = vscode.window.activeTerminal || vscode.window.createTerminal("Pyx");
+            const terminal = vscode.window.terminals.find(t => t.name === "Pyx") || vscode.window.createTerminal("Pyx");
             terminal.show();
-            terminal.sendText(`python "${scriptPath}" "${filePath}" -o "${outPath}"`);
+            terminal.sendText(`python3 "${scriptPath}" "${filePath}" -o "${outPath}"`);
         });
     });
 
-    context.subscriptions.push(disposableRun);
+    context.subscriptions.push(disposableRunAndCopy);
+    context.subscriptions.push(disposableRunOnly);
     context.subscriptions.push(disposableConvert);
 }
 

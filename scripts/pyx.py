@@ -5,9 +5,8 @@ import argparse
 import subprocess
 
 # ---------------------------------------------------------
-# 必須ヘッダー
+# 必須ヘッダー (免責事項)
 # ---------------------------------------------------------
-# Unicodeエスケープにしてあるので、ソースコード自体の保存形式に依存しません
 HEADER_TEXT = """'''
 \u3053\u306e\u30d7\u30ed\u30b0\u30e9\u30e0\u306f\u7279\u5b9a\u306e\u30a2\u30eb\u30b4\u30ea\u30ba\u30e0\u306b\u3088\u308a\u5909\u63db\u3055\u308c\u305f\u3082\u306e\u3067\u3001AI\u306f\u4e00\u5207\u95a2\u4e0e\u3057\u3066\u3044\u307e\u305b\u3093\u3002
 This program was transformed by a specific algorithm, and no AI was involved in the process.
@@ -18,34 +17,24 @@ https://github.com/potatoo1211/pyx-launguage
 """
 
 # ---------------------------------------------------------
-# Helper: クリップボードコピー (WSL文字化け対策版)
+# Helper: クリップボードコピー
 # ---------------------------------------------------------
 def copy_to_clipboard(text):
-    """
-    WSL環境で日本語をクリップボードに送ると文字化けするため、
-    Windows側の clip.exe に Shift-JIS (cp932) でパイプする。
-    """
     try:
-        # WSLかどうか判定 (kernel releaseに'microsoft'が含まれる)
         is_wsl = "microsoft" in os.uname().release.lower()
-        
         if is_wsl:
-            # WSLの場合: clip.exe に cp932 (Windows日本語) で渡す
-            # ※ cp932に変換できない文字(絵文字など)は 'ignore' で無視する
             proc = subprocess.Popen(['clip.exe'], stdin=subprocess.PIPE)
             proc.communicate(input=text.encode('cp932', errors='ignore'))
             print(">> Code copied to clipboard (WSL mode).")
         else:
-            # 普通のLinux/Mac/Windowsの場合
             import pyperclip
             pyperclip.copy(text)
             print(">> Code copied to clipboard.")
-            
     except Exception as e:
         print(f">> Copy failed: {e}")
 
 # ---------------------------------------------------------
-# Helper Functions
+# Helpers
 # ---------------------------------------------------------
 def smart_split_args(text):
     args = []
@@ -69,6 +58,19 @@ def safe_replace(text, mapping):
         text = re.sub(pattern, v, text)
     return text
 
+def dedent_block(lines):
+    if not lines: return []
+    first_valid_line = next((l for l in lines if l.strip()), None)
+    if not first_valid_line: return lines
+    indent_len = len(first_valid_line) - len(first_valid_line.lstrip())
+    dedented = []
+    for line in lines:
+        if not line.strip():
+            dedented.append("")
+        else:
+            dedented.append(line[indent_len:] if len(line) >= indent_len else line.lstrip())
+    return dedented
+
 # ---------------------------------------------------------
 # Definition Class
 # ---------------------------------------------------------
@@ -76,7 +78,7 @@ class Definition:
     def __init__(self, name, args_str, body_lines, is_macro):
         self.name = name
         self.is_macro = is_macro
-        self.body_lines = self._dedent_block(body_lines)
+        self.body_lines = dedent_block(body_lines)
         self.params = [] 
 
         if is_macro and args_str.strip():
@@ -88,19 +90,6 @@ class Definition:
                 else:
                     self.params.append({ 'name': raw_arg.strip(), 'default': None })
 
-    def _dedent_block(self, lines):
-        if not lines: return []
-        first_valid_line = next((l for l in lines if l.strip()), None)
-        if not first_valid_line: return lines
-        indent_len = len(first_valid_line) - len(first_valid_line.lstrip())
-        dedented = []
-        for line in lines:
-            if not line.strip():
-                dedented.append("")
-            else:
-                dedented.append(line[indent_len:] if len(line) >= indent_len else line.lstrip())
-        return dedented
-
 # ---------------------------------------------------------
 # Transpiler Logic
 # ---------------------------------------------------------
@@ -111,7 +100,7 @@ class PyxTranspiler:
 
     def load_file(self, filepath):
         if not os.path.exists(filepath):
-            sys.exit(1)
+            return None
         with open(filepath, 'r', encoding='utf-8') as f:
             return f.readlines()
 
@@ -121,9 +110,10 @@ class PyxTranspiler:
         if abs_path in visited: return []
         visited.add(abs_path)
 
-        try:
-            raw_lines = self.load_file(filepath)
-        except: return []
+        raw_lines = self.load_file(filepath)
+        if raw_lines is None:
+            print(f"Warning: Could not find file to expand: {filepath}")
+            return []
 
         expanded_lines = []
         base_dir = os.path.dirname(abs_path)
@@ -165,14 +155,17 @@ class PyxTranspiler:
                 main_lines.append(line)
         return main_lines
 
-    def parse_definitions_from_lines(self, lines):
+    def parse_namespace_content(self, lines):
         definitions = {}
+        raw_lines = []
+        lines = dedent_block(lines)
         i = 0
         while i < len(lines):
             line = lines[i]
             sline = line.strip()
             match_macro = re.match(r'^!macro\s+(\w+)\s*\((.*?)\)\s*:\s*(.*)$', sline)
             match_define = re.match(r'^!define\s+(\w+)\s*:\s*(.*)$', sline)
+            
             if match_macro or match_define:
                 is_macro = bool(match_macro)
                 match = match_macro if is_macro else match_define
@@ -196,8 +189,10 @@ class PyxTranspiler:
                         body.append(next_line)
                         i += 1
                 definitions[name] = Definition(name, args_str, body, is_macro)
+            else:
+                raw_lines.append(line)
             i += 1
-        return definitions
+        return definitions, raw_lines
 
     def process_line_expansion(self, line):
         for name, definition in self.active_definitions.items():
@@ -235,39 +230,48 @@ class PyxTranspiler:
             if i < len(call_args): val = call_args[i]
             elif param['default'] is not None: val = param['default']
             replacements[param['name']] = val
+        
         is_inline = (len(definition.body_lines) == 1)
         if is_inline:
             body = definition.body_lines[0].strip()
             body = safe_replace(body, replacements)
+            # ★修正: インライン展開でも改行を増やさない
             return [original_line.replace(match_str, body)]
         else:
             expanded_lines = []
             for body_line in definition.body_lines:
                 temp = safe_replace(body_line, replacements)
-                expanded_lines.append(base_indent + temp + "\n")
+                # ★修正: .rstrip('\n') で元の改行を削除してから、新しい改行を付与
+                # これにより二重改行を防ぐ
+                expanded_lines.append(base_indent + temp.rstrip('\n') + "\n")
             return expanded_lines
 
     def transpile(self, main_file):
         all_lines = self.expand_files(main_file)
         main_code_lines = self.extract_namespaces(all_lines)
         if 'default' in self.namespaces:
-            defs = self.parse_definitions_from_lines(self.namespaces['default'])
+            defs, raw = self.parse_namespace_content(self.namespaces['default'])
             self.active_definitions.update(defs)
+            main_code_lines[0:0] = raw
+
         final_lines = []
         cases_indent_level = 0
         i = 0
         while i < len(main_code_lines):
             line = main_code_lines[i]
             sline = line.strip()
+
             if sline.startswith('$using'):
                 try:
                     target_ns = sline.split()[1]
                     if target_ns in self.namespaces:
-                        defs = self.parse_definitions_from_lines(self.namespaces[target_ns])
+                        defs, raw_code = self.parse_namespace_content(self.namespaces[target_ns])
                         self.active_definitions.update(defs)
+                        main_code_lines[i+1:i+1] = raw_code
                 except: pass
                 i += 1
                 continue
+
             match_macro = re.match(r'^!macro\s+(\w+)\s*\((.*?)\)\s*:\s*(.*)$', sline)
             match_define = re.match(r'^!define\s+(\w+)\s*:\s*(.*)$', sline)
             if match_macro or match_define:
@@ -304,13 +308,16 @@ class PyxTranspiler:
             if sline.startswith('$cases'):
                 parts = sline.split(None, 1)
                 if len(parts) > 1:
-                    count_expr = parts[1]
-                    indent_match = re.match(r'^(\s*)', line)
-                    base_indent = indent_match.group(1) if indent_match else ""
-                    extra_indent = "    " * cases_indent_level
-                    loop_line = f"{base_indent}{extra_indent}for _ in range({count_expr}):\n"
-                    final_lines.append(loop_line)
-                    cases_indent_level += 1
+                    count_expr = parts[1].strip()
+                    if count_expr == '1':
+                        pass
+                    else:
+                        indent_match = re.match(r'^(\s*)', line)
+                        base_indent = indent_match.group(1) if indent_match else ""
+                        extra_indent = "    " * cases_indent_level
+                        loop_line = f"{base_indent}{extra_indent}for _ in range({count_expr}):\n"
+                        final_lines.append(loop_line)
+                        cases_indent_level += 1
                 i += 1
                 continue
             
@@ -322,7 +329,9 @@ class PyxTranspiler:
             else:
                 final_lines.append(line)
             i += 1
-        return HEADER_TEXT + "".join(final_lines)
+        
+        # ヘッダーは呼び出し元で結合するため、ここではコードのみ返す
+        return "".join(final_lines)
 
 # ---------------------------------------------------------
 # Main
@@ -336,33 +345,55 @@ def main():
     args = parser.parse_args()
 
     if not os.path.exists(args.file):
+        print(f"Error: Main file not found: {args.file}")
         return
 
+    # オリジナルコードの読み込み (エラー時は空文字)
+    try:
+        with open(args.file, 'r', encoding='utf-8') as f:
+            original_code = f.read()
+    except:
+        original_code = "Could not read original file."
+
+    # トランスパイル実行
     transpiler = PyxTranspiler()
     try:
-        py_code = transpiler.transpile(args.file)
+        py_code_body = transpiler.transpile(args.file)
     except Exception as e:
         print(f"Transpile Error: {e}")
         return
 
-    py_code = re.sub(r'\n{3,}', '\n\n', py_code)
+    # 最終整形:
+    # 1. HEADER
+    # 2. オリジナルコード (コメントブロック)
+    # 3. トランスパイル後のコード
+    
+    original_block = f"'''\n[Original Code]\n{original_code}\n'''\n"
+    
+    # コード本体の余計な改行を整理 (連続する3つ以上の改行を2つに、末尾の空白削除など)
+    py_code_body = re.sub(r'\n{3,}', '\n\n', py_code_body)
+    
+    final_output = HEADER_TEXT + "\n" + original_block + "\n" + py_code_body
 
     if args.out:
-        # ファイル出力はBOMなしUTF-8で統一
-        with open(args.out, 'w', encoding='utf-8') as f:
-            f.write(py_code)
+        with open(args.out, 'w', encoding='utf-8-sig') as f:
+            f.write(final_output)
         print(f"Saved to {args.out}")
 
     if args.copy:
-        # 修正版のコピー関数を使用
-        copy_to_clipboard(py_code)
+        copy_to_clipboard(final_output)
 
     if args.run:
         print(">> Executing...")
         print("-" * 20)
+        
+        file_dir = os.path.dirname(os.path.abspath(args.file))
+        if file_dir not in sys.path:
+            sys.path.insert(0, file_dir)
+            
         exec_globals = {}
         try:
-            exec(py_code, exec_globals)
+            exec(final_output, exec_globals)
         except Exception as e:
             print(f"Runtime Error: {e}")
 
