@@ -5,7 +5,19 @@ import argparse
 import pyperclip
 
 # ---------------------------------------------------------
-# Helper: スマートな引数分割 (カッコのネスト対応)
+# Constants
+# ---------------------------------------------------------
+HEADER_TEXT = """'''
+このプログラムは特定のアルゴリズムにより変換されたもので、AIは一切関与していません。
+This program was transformed by a specific algorithm, and no AI was involved in the process.
+
+github:
+https://github.com/potatoo1211/pyx-launguage
+'''
+"""
+
+# ---------------------------------------------------------
+# Helper: スマートな引数分割
 # ---------------------------------------------------------
 def smart_split_args(text):
     args = []
@@ -24,17 +36,24 @@ def smart_split_args(text):
     return [a for a in args if a]
 
 # ---------------------------------------------------------
+# Helper: 単語境界を考慮した置換
+# ---------------------------------------------------------
+def safe_replace(text, mapping):
+    for k, v in mapping.items():
+        pattern = r'\b' + re.escape(k) + r'\b'
+        text = re.sub(pattern, v, text)
+    return text
+
+# ---------------------------------------------------------
 # 定義クラス
 # ---------------------------------------------------------
 class Definition:
     def __init__(self, name, args_str, body_lines, is_macro):
         self.name = name
         self.is_macro = is_macro
-        # 本体のインデントを整理して保存
         self.body_lines = self._dedent_block(body_lines)
         self.params = [] 
 
-        # 引数解析 (初期値対応)
         if is_macro and args_str.strip():
             raw_args = smart_split_args(args_str)
             for raw_arg in raw_args:
@@ -78,7 +97,6 @@ class PyxTranspiler:
         with open(filepath, 'r', encoding='utf-8') as f:
             return f.readlines()
 
-    # $expand の解決
     def expand_files(self, filepath, visited=None):
         if visited is None: visited = set()
         abs_path = os.path.abspath(filepath)
@@ -96,13 +114,11 @@ class PyxTranspiler:
                     target_rel = sline.split(None, 1)[1].strip()
                     target_full = os.path.join(base_dir, target_rel)
                     expanded_lines.extend(self.expand_files(target_full, visited))
-                except IndexError:
-                    pass 
+                except IndexError: pass 
             else:
                 expanded_lines.append(line)
         return expanded_lines
 
-    # $namespace ブロックの抽出
     def extract_namespaces(self, lines):
         main_lines = []
         current_ns = None
@@ -130,7 +146,6 @@ class PyxTranspiler:
                 main_lines.append(line)
         return main_lines
 
-    # 行リストから定義を抽出
     def parse_definitions_from_lines(self, lines):
         definitions = {}
         i = 0
@@ -138,10 +153,7 @@ class PyxTranspiler:
             line = lines[i]
             sline = line.strip()
             
-            # Regex修正: コロンの後ろ(group 3/2)もキャプチャする
-            # !macro Name(Args): Body
             match_macro = re.match(r'^!macro\s+(\w+)\s*\((.*?)\)\s*:\s*(.*)$', sline)
-            # !define Name: Body
             match_define = re.match(r'^!define\s+(\w+)\s*:\s*(.*)$', sline)
 
             if match_macro or match_define:
@@ -157,31 +169,21 @@ class PyxTranspiler:
                     inline_body = match.group(2)
 
                 body = []
-                
-                # 1行定義かブロック定義か判定
                 if inline_body and inline_body.strip():
-                    # 1行定義 (!define _S: input など)
                     body.append(inline_body)
-                    # 行カウンタはそのまま（次の行は別のコードとして処理）
                 else:
-                    # ブロック定義 (次の行から読み込む)
                     i += 1
                     while i < len(lines):
                         next_line = lines[i]
-                        # 空行はスキップせず含めるが、インデントが戻ったら終了
                         if next_line.strip() and not (next_line.startswith(' ') or next_line.startswith('\t')):
                             i -= 1
                             break
                         body.append(next_line)
                         i += 1
-                
                 definitions[name] = Definition(name, args_str, body, is_macro)
-            else:
-                pass 
             i += 1
         return definitions
 
-    # 行のマクロ適用
     def process_line_expansion(self, line):
         for name, definition in self.active_definitions.items():
             if definition.is_macro:
@@ -204,7 +206,6 @@ class PyxTranspiler:
                         args_str = line[start_idx:end_idx]
                         call_args = smart_split_args(args_str)
                         return True, self.expand_body(definition, call_args, line, full_match)
-
             else:
                 # !define: name
                 pattern = r'\b' + re.escape(name) + r'\b'
@@ -215,45 +216,31 @@ class PyxTranspiler:
         return False, [line]
 
     def expand_body(self, definition, call_args, original_line, match_str):
+        # インデントは呼び出し元の行のものを基準にする
         indent_match = re.match(r'^(\s*)', original_line)
         base_indent = indent_match.group(1) if indent_match else ""
         
-        # 引数マッピング
         replacements = {}
         for i, param in enumerate(definition.params):
             p_name = param['name']
             p_default = param['default']
             val = "None"
-            
-            if i < len(call_args):
-                val = call_args[i]
-            elif p_default is not None:
-                val = p_default
-            
+            if i < len(call_args): val = call_args[i]
+            elif p_default is not None: val = p_default
             replacements[p_name] = val
 
-        # インライン判定
         is_inline = (len(definition.body_lines) == 1)
-
-        # ★修正ポイント: 単語境界を考慮した置換関数
-        def safe_replace(text, mapping):
-            for k, v in mapping.items():
-                # \bN\b とすることで None の N にはマッチさせない
-                pattern = r'\b' + re.escape(k) + r'\b'
-                text = re.sub(pattern, v, text)
-            return text
 
         if is_inline:
             body = definition.body_lines[0].strip()
-            # body内の変数を置換
             body = safe_replace(body, replacements)
-            # 行全体への適用（ここは単純置換でOK、match_strは一意なので）
             return [original_line.replace(match_str, body)]
         else:
             expanded_lines = []
             for body_line in definition.body_lines:
                 temp = body_line
                 temp = safe_replace(temp, replacements)
+                # マクロ本体は呼び出し元のインデントに従う
                 expanded_lines.append(base_indent + temp + "\n")
             return expanded_lines
 
@@ -266,11 +253,43 @@ class PyxTranspiler:
             self.active_definitions.update(defs)
 
         final_lines = []
+        
+        # casesによる追加インデントレベル
+        cases_indent_level = 0
+        
         i = 0
         while i < len(main_code_lines):
             line = main_code_lines[i]
             sline = line.strip()
             
+            # -------------------------------------------------
+            # 1. $cases の処理
+            # -------------------------------------------------
+            if sline.startswith('$cases'):
+                # $cases X -> for _ in range(X):
+                parts = sline.split(None, 1)
+                if len(parts) > 1:
+                    count_expr = parts[1]
+                    
+                    # 現在の行のインデントを取得
+                    indent_match = re.match(r'^(\s*)', line)
+                    base_indent = indent_match.group(1) if indent_match else ""
+                    
+                    # 追加インデント分を考慮
+                    extra_indent_str = "    " * cases_indent_level
+                    
+                    # for文を出力
+                    loop_line = f"{base_indent}{extra_indent_str}for _ in range({count_expr}):\n"
+                    final_lines.append(loop_line)
+                    
+                    # 以降のインデントレベルを上げる
+                    cases_indent_level += 1
+                i += 1
+                continue
+
+            # -------------------------------------------------
+            # 2. $using / !macro / !define の処理 (出力しない)
+            # -------------------------------------------------
             if sline.startswith('$using'):
                 try:
                     target_ns = sline.split()[1]
@@ -280,16 +299,14 @@ class PyxTranspiler:
                 except IndexError: pass
                 i += 1
                 continue
-            
-            # 行単位で定義チェック (1行定義対応)
+
+            # 定義行チェック (定義を登録するだけ)
             match_macro = re.match(r'^!macro\s+(\w+)\s*\((.*?)\)\s*:\s*(.*)$', sline)
             match_define = re.match(r'^!define\s+(\w+)\s*:\s*(.*)$', sline)
-            
             if match_macro or match_define:
                 is_macro = bool(match_macro)
                 match = match_macro if is_macro else match_define
                 name = match.group(1)
-                
                 if is_macro:
                     args_str = match.group(2)
                     inline_body = match.group(3)
@@ -304,6 +321,9 @@ class PyxTranspiler:
                     i += 1
                     while i < len(main_code_lines):
                         next_line = main_code_lines[i]
+                        # 終了判定: 空行でない かつ インデントがない/戻った
+                        # ただし、casesの中だとインデントがあるかもしれないが、
+                        # !macro定義自体は「定義時点のインデント」を見るべき
                         if next_line.strip() and not (next_line.startswith(' ') or next_line.startswith('\t')):
                             i -= 1
                             break
@@ -314,15 +334,30 @@ class PyxTranspiler:
                 i += 1
                 continue
 
+            # -------------------------------------------------
+            # 3. 通常行 (マクロ展開 + casesインデント適用)
+            # -------------------------------------------------
             expanded, new_lines = self.process_line_expansion(line)
+            
             if expanded:
+                # 展開結果を現在の処理キューの先頭に割り込ませる
+                # ここではインデント適用せず、再評価時に適用させる
                 main_code_lines[i:i+1] = new_lines
                 continue
             else:
-                final_lines.append(line)
+                # 出力確定行
+                # casesのインデントを適用して出力
+                if cases_indent_level > 0:
+                    # 空行以外にインデントを追加
+                    if line.strip():
+                        final_lines.append(("    " * cases_indent_level) + line)
+                    else:
+                        final_lines.append(line)
+                else:
+                    final_lines.append(line)
                 i += 1
 
-        return "".join(final_lines)
+        return HEADER_TEXT + "".join(final_lines)
 
 def main():
     parser = argparse.ArgumentParser()
@@ -342,6 +377,7 @@ def main():
         print(f"Error: {e}")
         return
 
+    # 整形
     py_code = re.sub(r'\n{3,}', '\n\n', py_code)
 
     if args.out:

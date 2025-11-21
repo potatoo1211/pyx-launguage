@@ -11,11 +11,11 @@
     "dollar-keywords": {
       "patterns": [
         {
-          "match": "^\\s*(\\$)(namespace|using|expand)\\b(?:\\s+([\\w./]+))?",
+          "match": "^\\s*(\\$)(namespace|using|expand|cases)\\b(?:\\s+([\\w./()]+))?",
           "captures": {
             "1": { "name": "keyword.control.import.pyx" }, 
             "2": { "name": "keyword.control.import.pyx" },
-            "3": { "name": "entity.name.namespace.pyx" }
+            "3": { "name": "variable.parameter.pyx" }
           }
         },
         {
@@ -50,7 +50,6 @@
     "variable-assignment": {
       "patterns": [
         {
-          "comment": "Catch variables being assigned (e.g., x = 1, x,y = 1,2)",
           "match": "\\b([a-zA-Z_]\\w*)\\s*(?=(,\\s*[a-zA-Z_]\\w*\\s*)*=[^=])",
           "name": "variable.other.readwrite.pyx"
         }
