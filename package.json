@@ -9,8 +9,12 @@
   "categories": [
     "Other"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/potatoo1211/pyx-launguage"
+  },
   "activationEvents": [
-    "onLanguage:pyx" 
+     
   ],
   "main": "./out/extension.js",
   "contributes": {
