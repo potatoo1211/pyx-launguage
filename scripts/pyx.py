@@ -3,18 +3,16 @@ import re
 import os
 import argparse
 import subprocess
+import base64
 
 # ---------------------------------------------------------
-# 必須ヘッダー (免責事項)
+# デフォルトの免責事項 (設定がない場合に使用)
 # ---------------------------------------------------------
-HEADER_TEXT = """'''
-\u3053\u306e\u30d7\u30ed\u30b0\u30e9\u30e0\u306f\u7279\u5b9a\u306e\u30a2\u30eb\u30b4\u30ea\u30ba\u30e0\u306b\u3088\u308a\u5909\u63db\u3055\u308c\u305f\u3082\u306e\u3067\u3001AI\u306f\u4e00\u5207\u95a2\u4e0e\u3057\u3066\u3044\u307e\u305b\u3093\u3002
+DEFAULT_HEADER = """\u3053\u306e\u30d7\u30ed\u30b0\u30e9\u30e0\u306f\u7279\u5b9a\u306e\u30a2\u30eb\u30b4\u30ea\u30ba\u30e0\u306b\u3088\u308a\u5909\u63db\u3055\u308c\u305f\u3082\u306e\u3067\u3001AI\u306f\u4e00\u5207\u95a2\u4e0e\u3057\u3066\u3044\u307e\u305b\u3093\u3002
 This program was transformed by a specific algorithm, and no AI was involved in the process.
 
 github:
-https://github.com/potatoo1211/pyx-launguage
-'''
-"""
+https://github.com/potatoo1211/pyx-launguage"""
 
 # ---------------------------------------------------------
 # Helper: クリップボードコピー
@@ -34,20 +32,48 @@ def copy_to_clipboard(text):
         print(f">> Copy failed: {e}")
 
 # ---------------------------------------------------------
-# Helpers
+# Parsing Helpers
 # ---------------------------------------------------------
 def smart_split_args(text):
     args = []
     current = []
     depth = 0
+    in_quote = False
+    quote_char = None
+    escape = False
+
     for char in text:
-        if char in '([{': depth += 1
-        elif char in ')]}': depth -= 1
-        elif char == ',' and depth == 0:
-            args.append("".join(current).strip())
-            current = []
+        if escape:
+            current.append(char)
+            escape = False
             continue
-        current.append(char)
+        if char == '\\':
+            current.append(char)
+            escape = True
+            continue
+
+        if in_quote:
+            if char == quote_char:
+                in_quote = False
+                quote_char = None
+            current.append(char)
+        else:
+            if char in '"\'':
+                in_quote = True
+                quote_char = char
+                current.append(char)
+            elif char in '([{':
+                depth += 1
+                current.append(char)
+            elif char in ')]}':
+                depth -= 1
+                current.append(char)
+            elif char == ',' and depth == 0:
+                args.append("".join(current).strip())
+                current = []
+            else:
+                current.append(char)
+    
     if current:
         args.append("".join(current).strip())
     return [a for a in args if a]
@@ -200,6 +226,7 @@ class PyxTranspiler:
                 pattern = r'\b' + re.escape(name) + r'\b'
                 if re.search(pattern, line):
                     return True, self.expand_body(definition, [], line, name)
+        
         for name, definition in self.active_definitions.items():
             if definition.is_macro:
                 pattern = r'\b' + re.escape(name) + r'\s*\('
@@ -208,12 +235,36 @@ class PyxTranspiler:
                     start_idx = match.end()
                     depth = 1
                     end_idx = -1
+                    
+                    in_quote = False
+                    quote_char = None
+                    escape = False
+
                     for k in range(start_idx, len(line)):
-                        if line[k] == '(': depth += 1
-                        elif line[k] == ')': depth -= 1
+                        char = line[k]
+                        if escape:
+                            escape = False
+                            continue
+                        if char == '\\':
+                            escape = True
+                            continue
+                        
+                        if in_quote:
+                            if char == quote_char:
+                                in_quote = False
+                        else:
+                            if char in '"\'':
+                                in_quote = True
+                                quote_char = char
+                            elif char == '(':
+                                depth += 1
+                            elif char == ')':
+                                depth -= 1
+                        
                         if depth == 0:
                             end_idx = k
                             break
+                    
                     if end_idx != -1:
                         full_match = line[match.start():end_idx+1]
                         args_str = line[start_idx:end_idx]
@@ -258,24 +309,18 @@ class PyxTranspiler:
             line = main_code_lines[i]
             sline = line.strip()
 
-            # --- $using のカンマ区切り対応 ---
             if sline.startswith('$using'):
                 parts = sline.split(None, 1)
                 if len(parts) > 1:
-                    # カンマで分割してリスト化 (例: "dir,ACL" -> ["dir", "ACL"])
                     target_ns_list = [ns.strip() for ns in parts[1].split(',')]
-                    
                     all_raw_codes = []
                     for target_ns in target_ns_list:
                         if target_ns in self.namespaces:
                             defs, raw_code = self.parse_namespace_content(self.namespaces[target_ns])
                             self.active_definitions.update(defs)
                             all_raw_codes.extend(raw_code)
-                    
-                    # 取得した生コードを現在の位置に挿入
                     if all_raw_codes:
                         main_code_lines[i+1:i+1] = all_raw_codes
-                
                 i += 1
                 continue
 
@@ -348,6 +393,13 @@ def main():
     parser.add_argument('--run', '-r', action='store_true')
     parser.add_argument('--copy', '-c', action='store_true')
     parser.add_argument('--out', '-o')
+    
+    parser.add_argument('--no-header', action='store_true')
+    parser.add_argument('--no-original', action='store_true')
+    parser.add_argument('--comment-style', default="'''")
+    # 新しい引数: Base64エンコードされたヘッダーテキスト
+    parser.add_argument('--header-b64', default="")
+
     args = parser.parse_args()
 
     if not os.path.exists(args.file):
@@ -360,6 +412,16 @@ def main():
     except:
         original_code = "Could not read original file."
 
+    # ヘッダーテキストの決定
+    if args.header_b64:
+        try:
+            header_content = base64.b64decode(args.header_b64).decode('utf-8')
+        except:
+            header_content = DEFAULT_HEADER
+    else:
+        header_content = DEFAULT_HEADER
+
+    # トランスパイル
     transpiler = PyxTranspiler()
     try:
         py_code_body = transpiler.transpile(args.file)
@@ -367,18 +429,34 @@ def main():
         print(f"Transpile Error: {e}")
         return
 
-    original_block = f"'''\n[Original Code]\n{original_code}\n'''\n"
-    py_code_body = re.sub(r'\n{3,}', '\n\n', py_code_body)
-    final_output = HEADER_TEXT + "\n" + original_block + "\n" + py_code_body
+    # 出力生成
+    final_output_parts = []
 
+    # 1. 免責事項
+    if not args.no_header:
+        c_start = args.comment_style
+        c_end = args.comment_style
+        final_output_parts.append(f"{c_start}\n{header_content}\n{c_end}\n")
+
+    # 2. オリジナルコード
+    if not args.no_original:
+        c_start = args.comment_style
+        c_end = args.comment_style
+        final_output_parts.append(f"{c_start}\n[Original Code]\n{original_code}\n{c_end}\n")
+
+    # 3. 本体
+    py_code_body = re.sub(r'\n{3,}', '\n\n', py_code_body)
+    final_output_parts.append(py_code_body)
+
+    final_output = "".join(final_output_parts)
+
+    # ファイル保存
     if args.out:
         with open(args.out, 'w', encoding='utf-8-sig') as f:
             f.write(final_output)
         print(f"Saved to {args.out}")
 
-    if args.copy:
-        copy_to_clipboard(final_output)
-
+    # 実行
     if args.run:
         print(">> Executing...")
         print("-" * 20)
@@ -390,8 +468,17 @@ def main():
         exec_globals = {}
         try:
             exec(final_output, exec_globals)
+        except KeyboardInterrupt:
+            print("\n>> Execution Interrupted.")
         except Exception as e:
             print(f"Runtime Error: {e}")
+        finally:
+            if args.copy:
+                print("-" * 20)
+                copy_to_clipboard(final_output)
+
+    elif args.copy:
+         copy_to_clipboard(final_output)
 
 if __name__ == '__main__':
     main()

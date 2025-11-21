@@ -2,7 +2,7 @@
   "name": "pyx-launguage",
   "displayName": "Pyextended",
   "description": "Extended_Python_launguage",
-  "version": "0.0.2",
+  "version": "0.1.0",
   "engines": {
     "vscode": "^1.106.1"
   },
@@ -67,6 +67,32 @@
           "group": "navigation"
         }
       ]
+    },
+    "configuration": {
+      "title": "Pyx Language",
+      "properties": {
+        "pyx.showDisclaimer": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the AI disclaimer header in the generated code."
+        },
+        "pyx.showOriginalCode": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include the original .pyx code as comments in the generated code."
+        },
+        "pyx.commentStyle": {
+          "type": "string",
+          "default": "'''",
+          "description": "The comment symbol used for headers (e.g. ''' or \"\"\")."
+        },
+        "pyx.disclaimerText": {
+          "type": "string",
+          "editPresentation": "multilineText",
+          "default": "このプログラムは特定のアルゴリズムにより変換されたもので、AIは一切関与していません。\nThis program was transformed by a specific algorithm, and no AI was involved in the process.\n\ngithub:\nhttps://github.com/potatoo1211/pyx-launguage",
+          "description": "The text content of the disclaimer header."
+        }
+      }
     }
   },
   "scripts": {
