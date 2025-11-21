@@ -235,14 +235,11 @@ class PyxTranspiler:
         if is_inline:
             body = definition.body_lines[0].strip()
             body = safe_replace(body, replacements)
-            # ★修正: インライン展開でも改行を増やさない
             return [original_line.replace(match_str, body)]
         else:
             expanded_lines = []
             for body_line in definition.body_lines:
                 temp = safe_replace(body_line, replacements)
-                # ★修正: .rstrip('\n') で元の改行を削除してから、新しい改行を付与
-                # これにより二重改行を防ぐ
                 expanded_lines.append(base_indent + temp.rstrip('\n') + "\n")
             return expanded_lines
 
@@ -261,14 +258,24 @@ class PyxTranspiler:
             line = main_code_lines[i]
             sline = line.strip()
 
+            # --- $using のカンマ区切り対応 ---
             if sline.startswith('$using'):
-                try:
-                    target_ns = sline.split()[1]
-                    if target_ns in self.namespaces:
-                        defs, raw_code = self.parse_namespace_content(self.namespaces[target_ns])
-                        self.active_definitions.update(defs)
-                        main_code_lines[i+1:i+1] = raw_code
-                except: pass
+                parts = sline.split(None, 1)
+                if len(parts) > 1:
+                    # カンマで分割してリスト化 (例: "dir,ACL" -> ["dir", "ACL"])
+                    target_ns_list = [ns.strip() for ns in parts[1].split(',')]
+                    
+                    all_raw_codes = []
+                    for target_ns in target_ns_list:
+                        if target_ns in self.namespaces:
+                            defs, raw_code = self.parse_namespace_content(self.namespaces[target_ns])
+                            self.active_definitions.update(defs)
+                            all_raw_codes.extend(raw_code)
+                    
+                    # 取得した生コードを現在の位置に挿入
+                    if all_raw_codes:
+                        main_code_lines[i+1:i+1] = all_raw_codes
+                
                 i += 1
                 continue
 
@@ -330,7 +337,6 @@ class PyxTranspiler:
                 final_lines.append(line)
             i += 1
         
-        # ヘッダーは呼び出し元で結合するため、ここではコードのみ返す
         return "".join(final_lines)
 
 # ---------------------------------------------------------
@@ -348,14 +354,12 @@ def main():
         print(f"Error: Main file not found: {args.file}")
         return
 
-    # オリジナルコードの読み込み (エラー時は空文字)
     try:
         with open(args.file, 'r', encoding='utf-8') as f:
             original_code = f.read()
     except:
         original_code = "Could not read original file."
 
-    # トランスパイル実行
     transpiler = PyxTranspiler()
     try:
         py_code_body = transpiler.transpile(args.file)
@@ -363,16 +367,8 @@ def main():
         print(f"Transpile Error: {e}")
         return
 
-    # 最終整形:
-    # 1. HEADER
-    # 2. オリジナルコード (コメントブロック)
-    # 3. トランスパイル後のコード
-    
     original_block = f"'''\n[Original Code]\n{original_code}\n'''\n"
-    
-    # コード本体の余計な改行を整理 (連続する3つ以上の改行を2つに、末尾の空白削除など)
     py_code_body = re.sub(r'\n{3,}', '\n\n', py_code_body)
-    
     final_output = HEADER_TEXT + "\n" + original_block + "\n" + py_code_body
 
     if args.out:

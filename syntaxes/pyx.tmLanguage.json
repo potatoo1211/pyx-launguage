@@ -11,9 +11,38 @@
     "dollar-keywords": {
       "patterns": [
         {
-          "match": "^\\s*(\\$)(namespace|using|expand|cases)\\b(?:\\s+([\\w./()]+))?",
+          "comment": "$using A, B, C ... (カンマ区切りリストのハイライト)",
+          "begin": "^\\s*(\\$)(using)\\b",
+          "beginCaptures": {
+            "1": { "name": "keyword.control.import.pyx" },
+            "2": { "name": "keyword.control.import.pyx" }
+          },
+          "end": "$",
+          "patterns": [
+            {
+              "match": "([a-zA-Z_]\\w*)",
+              "name": "entity.name.namespace.pyx"
+            },
+            {
+              "match": ",",
+              "name": "punctuation.separator.pyx"
+            }
+          ]
+        },
+        {
+          "comment": "$namespace Name (定義名のハイライト)",
+          "match": "^\\s*(\\$)(namespace)\\b(?:\\s+([\\w]+))?",
           "captures": {
-            "1": { "name": "keyword.control.import.pyx" }, 
+            "1": { "name": "keyword.control.import.pyx" },
+            "2": { "name": "keyword.control.import.pyx" },
+            "3": { "name": "entity.name.namespace.pyx" }
+          }
+        },
+        {
+          "comment": "$expand, $cases (その他の引数)",
+          "match": "^\\s*(\\$)(expand|cases)\\b(?:\\s+(.*))?",
+          "captures": {
+            "1": { "name": "keyword.control.import.pyx" },
             "2": { "name": "keyword.control.import.pyx" },
             "3": { "name": "variable.parameter.pyx" }
           }
