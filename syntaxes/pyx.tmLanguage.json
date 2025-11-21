@@ -1,0 +1,60 @@
+{
+  "scopeName": "source.pyx",
+  "patterns": [
+    { "include": "#dollar-keywords" },
+    { "include": "#bang-keywords" },
+    { "include": "#macro-usage" },
+    { "include": "#variable-assignment" },
+    { "include": "source.python" }
+  ],
+  "repository": {
+    "dollar-keywords": {
+      "patterns": [
+        {
+          "match": "^\\s*(\\$)(namespace|using|expand)\\b(?:\\s+([\\w./]+))?",
+          "captures": {
+            "1": { "name": "keyword.control.import.pyx" }, 
+            "2": { "name": "keyword.control.import.pyx" },
+            "3": { "name": "entity.name.namespace.pyx" }
+          }
+        },
+        {
+          "match": "^\\s*\\$",
+          "name": "keyword.control.import.pyx"
+        }
+      ]
+    },
+    "bang-keywords": {
+      "patterns": [
+        {
+          "match": "^\\s*(!)(define|macro)\\s+(\\w+)(?:\\s*(\\()([^)]*)(\\)))?\\s*:",
+          "captures": {
+            "1": { "name": "storage.type.pyx" },
+            "2": { "name": "storage.type.pyx" },
+            "3": { "name": "entity.name.function.pyx" },
+            "5": { "name": "variable.parameter.pyx" }
+          }
+        }
+      ]
+    },
+    "macro-usage": {
+      "patterns": [
+        {
+          "match": "\\b([a-zA-Z_]\\w*)\\s*\\(",
+          "captures": {
+            "1": { "name": "entity.name.function.pyx" }
+          }
+        }
+      ]
+    },
+    "variable-assignment": {
+      "patterns": [
+        {
+          "comment": "Catch variables being assigned (e.g., x = 1, x,y = 1,2)",
+          "match": "\\b([a-zA-Z_]\\w*)\\s*(?=(,\\s*[a-zA-Z_]\\w*\\s*)*=[^=])",
+          "name": "variable.other.readwrite.pyx"
+        }
+      ]
+    }
+  }
+}
