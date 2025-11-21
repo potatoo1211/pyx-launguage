@@ -15,18 +15,16 @@ This program was transformed by a specific algorithm, and no AI was involved in 
 github:
 https://github.com/potatoo1211/pyx-launguage"""
 
-# 無限ループ検知用リミット (1行に対する展開回数上限)
 MAX_EXPANSION_DEPTH = 1000
 
 # ---------------------------------------------------------
 # Data Structures
 # ---------------------------------------------------------
 class SourceLine:
-    """ コードの1行と、その由来（ファイル名、行番号）を保持するクラス """
     def __init__(self, content, filename, lineno):
-        self.content = content # 行の内容 (改行込み)
+        self.content = content
         self.filename = filename
-        self.lineno = lineno   # 1-based index
+        self.lineno = lineno
 
     def __repr__(self):
         return f"Line({self.lineno}: {self.content.strip()})"
@@ -98,10 +96,7 @@ def safe_replace(text, mapping):
     return text
 
 def dedent_block(source_lines):
-    """ SourceLineのリストを受け取り、インデントを除去して返す """
     if not source_lines: return []
-    
-    # 最初の有効な行を探してインデント幅を決める
     indent_len = 0
     first_valid = next((l for l in source_lines if l.content.strip()), None)
     if first_valid:
@@ -111,10 +106,8 @@ def dedent_block(source_lines):
     for sl in source_lines:
         txt = sl.content
         if not txt.strip():
-            # 空行はそのまま、ただし内容は空に
             dedented.append(SourceLine("\n", sl.filename, sl.lineno))
         else:
-            # インデント除去
             new_txt = txt[indent_len:] if len(txt) >= indent_len else txt.lstrip()
             dedented.append(SourceLine(new_txt, sl.filename, sl.lineno))
     return dedented
@@ -126,7 +119,6 @@ class Definition:
     def __init__(self, name, args_str, body_source_lines, is_macro):
         self.name = name
         self.is_macro = is_macro
-        # body_source_lines は SourceLine のリスト
         self.body_lines = dedent_block(body_source_lines)
         self.params = [] 
 
@@ -148,7 +140,6 @@ class PyxTranspiler:
         self.active_definitions = {} 
 
     def load_file(self, filepath):
-        """ ファイルを読み込み、SourceLineのリストとして返す """
         if not os.path.exists(filepath):
             return None
         
@@ -161,7 +152,6 @@ class PyxTranspiler:
         return lines
 
     def expand_files(self, filepath, visited=None):
-        """ $expand を再帰的に解決し、SourceLineのリストを結合して返す """
         if visited is None: visited = set()
         abs_path = os.path.abspath(filepath)
         if abs_path in visited: return []
@@ -216,8 +206,6 @@ class PyxTranspiler:
     def parse_namespace_content(self, source_lines):
         definitions = {}
         raw_sl_lines = []
-        
-        # namespace内もインデント除去
         source_lines = dedent_block(source_lines)
         
         i = 0
@@ -242,13 +230,11 @@ class PyxTranspiler:
                 
                 body = []
                 if inline_body and inline_body.strip():
-                    # 1行定義の場合、同じ行番号情報を継承した新しいSourceLineを作る
                     body.append(SourceLine(inline_body + "\n", sl.filename, sl.lineno))
                 else:
                     i += 1
                     while i < len(source_lines):
                         next_sl = source_lines[i]
-                        # 空行でない かつ インデントがない -> ブロック終了
                         if next_sl.content.strip() and not (next_sl.content.startswith(' ') or next_sl.content.startswith('\t')):
                             i -= 1
                             break
@@ -263,14 +249,12 @@ class PyxTranspiler:
     def process_line_expansion(self, sl):
         line_content = sl.content
         
-        # 1. define (引数なし) 置換
         for name, definition in self.active_definitions.items():
             if not definition.is_macro:
                 pattern = r'\b' + re.escape(name) + r'\b'
                 if re.search(pattern, line_content):
                     return True, self.expand_body(definition, [], sl, name)
         
-        # 2. macro (引数あり) 置換
         for name, definition in self.active_definitions.items():
             if definition.is_macro:
                 pattern = r'\b' + re.escape(name) + r'\s*\('
@@ -324,14 +308,12 @@ class PyxTranspiler:
             body_txt = body_sl.content.strip()
             body_txt = safe_replace(body_txt, replacements)
             new_content = original_sl.content.replace(match_str, body_txt)
-            # 展開後の行は、呼び出し元の行番号を引き継ぐ（エラー時に呼び出し元を指すため）
             return [SourceLine(new_content, original_sl.filename, original_sl.lineno)]
         else:
             expanded_lines = []
             for body_sl in definition.body_lines:
                 temp_txt = safe_replace(body_sl.content, replacements)
                 new_content = base_indent + temp_txt.rstrip('\n') + "\n"
-                # 複数行展開の場合も、基本は呼び出し元の行番号にマッピングする
                 expanded_lines.append(SourceLine(new_content, original_sl.filename, original_sl.lineno))
             return expanded_lines
 
@@ -345,15 +327,13 @@ class PyxTranspiler:
 
         final_sl_lines = []
         cases_indent_level = 0
-        
         i = 0
-        expansion_counter = 0 # 無限ループ検知用
+        expansion_counter = 0
 
         while i < len(main_code_lines):
             sl = main_code_lines[i]
             sline = sl.content.strip()
 
-            # $using
             if sline.startswith('$using'):
                 parts = sline.split(None, 1)
                 if len(parts) > 1:
@@ -370,7 +350,6 @@ class PyxTranspiler:
                 expansion_counter = 0
                 continue
 
-            # !macro / !define 定義
             match_macro = re.match(r'^!macro\s+(\w+)\s*\((.*?)\)\s*:\s*(.*)$', sline)
             match_define = re.match(r'^!define\s+(\w+)\s*:\s*(.*)$', sline)
             if match_macro or match_define:
@@ -400,21 +379,16 @@ class PyxTranspiler:
                 expansion_counter = 0
                 continue
             
-            # マクロ展開
             expanded, new_sl_lines = self.process_line_expansion(sl)
             if expanded:
-                # ★無限ループ検知
                 expansion_counter += 1
                 if expansion_counter > MAX_EXPANSION_DEPTH:
                     raise RuntimeError(f"Infinite macro expansion detected at line {sl.lineno}: {sline}")
-                
                 main_code_lines[i:i+1] = new_sl_lines
-                continue # インデックスを進めずに再評価
+                continue
             
-            # 展開されなかったらカウンタをリセットして次へ
             expansion_counter = 0
             
-            # $cases
             if sline.startswith('$cases'):
                 parts = sline.split(None, 1)
                 if len(parts) > 1:
@@ -431,7 +405,6 @@ class PyxTranspiler:
                 i += 1
                 continue
             
-            # 通常行出力
             if cases_indent_level > 0:
                 if sl.content.strip():
                     new_content = ("    " * cases_indent_level) + sl.content
@@ -470,7 +443,6 @@ def main():
     except:
         original_code = "Could not read original file."
 
-    # ヘッダー準備
     if args.header_b64:
         try:
             header_content = base64.b64decode(args.header_b64).decode('utf-8')
@@ -481,56 +453,37 @@ def main():
 
     transpiler = PyxTranspiler()
     try:
-        # SourceLineのリストを取得
         final_sl_list = transpiler.transpile(args.file)
     except Exception as e:
         print(f"Transpile Error: {e}")
         return
 
-    # 最終的なコード文字列と、行番号マッピングを作成
-    # generated_lines[i] は final_sl_list[source_map[i]] に対応... ではなく
-    # 行番号ベースで管理する
-    
     final_output_lines = []
-    line_mapping = {} # 生成後の行番号(0-based) -> SourceLineオブジェクト
+    line_mapping = {}
 
-    # 1. 免責事項
     if not args.no_header:
         header_block = f"{args.comment_style}\n{header_content}\n{args.comment_style}\n"
         for line in header_block.splitlines(True):
             final_output_lines.append(line)
-            # ヘッダーはマッピングなし (None)
 
-    # 2. オリジナルコード
     if not args.no_original:
         orig_block = f"{args.comment_style}\n[Original Code]\n{original_code}\n{args.comment_style}\n"
         for line in orig_block.splitlines(True):
             final_output_lines.append(line)
 
-    # 3. 本体
     current_line_idx = len(final_output_lines)
     for sl in final_sl_list:
-        # 整形（連続改行の削除など）はSourceMapを複雑にするので、
-        # ここでは最低限の結合のみ行い、実行時のズレをなくす
         final_output_lines.append(sl.content)
         line_mapping[current_line_idx] = sl
         current_line_idx += 1
     
     final_output = "".join(final_output_lines)
-    
-    # 整形（空行削除）は保存・コピー用に行うが、実行用（exec）はズレ防止のためそのままが良いかも？
-    # いや、ユーザー体験的には整形後のコードがコピーされるので、それに合わせるべき。
-    # しかし正規表現で一括置換するとSourceMapが壊れる。
-    # 今回は「整形はコピー時のみ」または「整形なし」にするのが安全。
-    # ここでは「整形なし」で進める（改行が多くても動作に問題はない）
 
-    # ファイル保存
     if args.out:
         with open(args.out, 'w', encoding='utf-8-sig') as f:
             f.write(final_output)
         print(f"Saved to {args.out}")
 
-    # 実行
     if args.run:
         print(">> Executing...")
         print("-" * 20)
@@ -540,40 +493,43 @@ def main():
             sys.path.insert(0, file_dir)
             
         exec_globals = {}
+        
+        # ★ここが重要：トランスパイラ自身のエラーをフィルタリングする準備
+        this_script_path = os.path.abspath(__file__)
+
         try:
-            # 擬似的なファイル名を指定して実行
             code_obj = compile(final_output, "generated_pyx.py", "exec")
             exec(code_obj, exec_globals)
         except KeyboardInterrupt:
             print("\n>> Execution Interrupted.")
         except Exception:
-            # ★エラーハンドリング（Source Map適用）
+            # エラー表示ロジック
             print("-" * 20)
             print("Runtime Error (Mapped to Source):")
             
-            # スタックトレースを取得
             exc_type, exc_value, exc_traceback = sys.exc_info()
             tb_list = traceback.extract_tb(exc_traceback)
             
             for frame in tb_list:
+                # ★修正ポイント：pyx.py 自体のフレームは無視する
+                if os.path.abspath(frame.filename) == this_script_path:
+                    continue
+
                 filename = frame.filename
-                lineno = frame.lineno # 1-based
+                lineno = frame.lineno
                 funcname = frame.name
                 line_text = frame.line
                 
                 if filename == "generated_pyx.py":
-                    # マッピングを検索 (linenoは1-basedなので-1する)
                     mapped_idx = lineno - 1
                     if mapped_idx in line_mapping:
                         src_sl = line_mapping[mapped_idx]
                         print(f'  File "{src_sl.filename}", line {src_sl.lineno}, in {funcname}')
                         print(f'    {src_sl.content.strip()}')
                     else:
-                        # ヘッダー部分などのエラー
                         print(f'  File "Generated Code", line {lineno}, in {funcname}')
                         print(f'    {line_text}')
                 else:
-                    # ライブラリ等のエラーはそのまま表示
                     print(f'  File "{filename}", line {lineno}, in {funcname}')
                     print(f'    {line_text}')
             
