@@ -1,17 +1,31 @@
 {
   "scopeName": "source.pyx",
   "patterns": [
-    { "include": "#dollar-keywords" },
+    { "include": "#debug-marker" },
     { "include": "#bang-keywords" },
+    { "include": "#dollar-keywords" },
+    { "include": "#python-storage" },
+    { "include": "#python-keywords" },
+    { "include": "#python-builtins" },
+    { "include": "#magic-methods" },
+    { "include": "#numeric-constants" },
+    { "include": "#operators" },
+    { "include": "#method-calls" },
+    { "include": "#macro-ops" }, 
     { "include": "#macro-usage" },
-    { "include": "#variable-assignment" },
+    { "include": "#constants" }, 
+    { "include": "#variable-heuristics" },
+    { "include": "#generic-variables" },
     { "include": "source.python" }
   ],
   "repository": {
+    "debug-marker": {
+      "match": "^\\s*(\\?)",
+      "captures": { "1": { "name": "storage.type.pyx" } }
+    },
     "dollar-keywords": {
       "patterns": [
         {
-          "comment": "$using A, B, C ... (カンマ区切りリストのハイライト)",
           "begin": "^\\s*(\\$)(using)\\b",
           "beginCaptures": {
             "1": { "name": "keyword.control.import.pyx" },
@@ -19,18 +33,11 @@
           },
           "end": "$",
           "patterns": [
-            {
-              "match": "([a-zA-Z_]\\w*)",
-              "name": "entity.name.namespace.pyx"
-            },
-            {
-              "match": ",",
-              "name": "punctuation.separator.pyx"
-            }
+            { "match": "([a-zA-Z_]\\w*)", "name": "entity.name.namespace.pyx" },
+            { "match": ",", "name": "punctuation.separator.pyx" }
           ]
         },
         {
-          "comment": "$namespace Name (定義名のハイライト)",
           "match": "^\\s*(\\$)(namespace)\\b(?:\\s+([\\w]+))?",
           "captures": {
             "1": { "name": "keyword.control.import.pyx" },
@@ -39,29 +46,167 @@
           }
         },
         {
-          "comment": "$expand, $cases (その他の引数)",
-          "match": "^\\s*(\\$)(expand|cases)\\b(?:\\s+(.*))?",
+          "match": "^\\s*(\\$)(name)\\b\\s+([a-zA-Z_]\\w*)",
+          "captures": {
+            "1": { "name": "keyword.control.import.pyx" },
+            "2": { "name": "keyword.control.import.pyx" },
+            "3": { "name": "entity.name.namespace.pyx" }
+          }
+        },
+        {
+          "match": "^\\s*(\\$)(expand|cases|mod)\\b(?:\\s+(.*))?",
           "captures": {
             "1": { "name": "keyword.control.import.pyx" },
             "2": { "name": "keyword.control.import.pyx" },
             "3": { "name": "variable.parameter.pyx" }
           }
         },
-        {
-          "match": "^\\s*\\$",
-          "name": "keyword.control.import.pyx"
-        }
+        { "match": "^\\s*\\$", "name": "keyword.control.import.pyx" }
       ]
     },
     "bang-keywords": {
       "patterns": [
         {
-          "match": "^\\s*(!)(define|macro)\\s+(\\w+)(?:\\s*(\\()([^)]*)(\\)))?\\s*:",
+          "match": "^\\s*(!)(if|else|elif)\\b",
+          "captures": {
+            "1": { "name": "keyword.control.directive.pyx" },
+            "2": { "name": "keyword.control.conditional.pyx" }
+          }
+        },
+        {
+          "comment": "!method (i,j).name... or *i.name... or s.name...",
+          "match": "^\\s*(\\$debug\\s+)?(!)(method)\\s+([*a-zA-Z0-9_.,()]+)(\\.)([a-zA-Z_]\\w*)\\s*(\\()([^)]*)(\\))\\s*:",
+          "captures": {
+            "1": { "name": "keyword.control.import.pyx" },
+            "2": { "name": "storage.type.pyx" },
+            "3": { "name": "storage.type.pyx" },
+            "4": { "name": "variable.other.readwrite.pyx" },
+            "5": { "name": "punctuation.separator.python" },
+            "6": { "name": "entity.name.function.pyx" },
+            "7": { "name": "punctuation.definition.parameters.begin.python" },
+            "8": { "name": "variable.parameter.pyx" },
+            "9": { "name": "punctuation.definition.parameters.end.python" }
+          }
+        },
+        {
+          "comment": "Generic definition !macro/define name(...):",
+          "match": "^\\s*(\\$debug\\s+)?(!)(define|macro|method)\\s+([a-zA-Z0-9_.]+)(?:\\s*(\\()([^)]*)(\\)))?\\s*:",
+          "captures": {
+            "1": { "name": "keyword.control.import.pyx" },
+            "2": { "name": "storage.type.pyx" },
+            "3": { "name": "storage.type.pyx" },
+            "4": { "name": "entity.name.function.pyx" },
+            "5": { "name": "punctuation.definition.parameters.begin.python" },
+            "6": { "name": "variable.parameter.pyx" },
+            "7": { "name": "punctuation.definition.parameters.end.python" }
+          }
+        }
+      ]
+    },
+    "macro-ops": {
+      "patterns": [
+        {
+          "match": "(!)(len)\\b",
           "captures": {
             "1": { "name": "storage.type.pyx" },
-            "2": { "name": "storage.type.pyx" },
-            "3": { "name": "entity.name.function.pyx" },
-            "5": { "name": "variable.parameter.pyx" }
+            "2": { "name": "storage.type.pyx" }
+          }
+        },
+        {
+          "begin": "(!)(\\[)",
+          "beginCaptures": {
+            "1": { "name": "storage.type.pyx" },
+            "2": { "name": "storage.type.pyx" }
+          },
+          "end": "(\\])",
+          "endCaptures": {
+            "1": { "name": "storage.type.pyx" }
+          },
+          "patterns": [
+            { "include": "#numeric-constants" },
+            { "include": "#constants" },
+            { "include": "#variable-heuristics" },
+            { "match": ":", "name": "keyword.operator.python" },
+            { "match": ",", "name": "punctuation.separator.python" },
+            { "match": "(\\+|\\-|\\*|\\/|%|\\*\\*|//)", "name": "keyword.operator.python" }
+          ]
+        }
+      ]
+    },
+    "python-storage": {
+      "patterns": [
+        {
+          "match": "\\b(def|class|lambda|global|nonlocal)\\b",
+          "name": "storage.type.python"
+        }
+      ]
+    },
+    "python-keywords": {
+      "patterns": [
+        {
+          "match": "\\b(and|as|assert|async|await|break|continue|del|elif|else|except|finally|for|from|if|import|in|is|not|or|pass|raise|return|try|while|with|yield)\\b",
+          "name": "keyword.control.flow.python"
+        }
+      ]
+    },
+    "python-builtins": {
+      "patterns": [
+        {
+          "match": "(?<!\\.)\\b(abs|all|any|ascii|bin|bool|breakpoint|bytearray|bytes|callable|chr|classmethod|compile|complex|delattr|dict|dir|divmod|enumerate|eval|exec|filter|float|format|frozenset|getattr|globals|hasattr|hash|help|hex|id|input|int|isinstance|issubclass|iter|len|list|locals|map|max|memoryview|min|next|object|oct|open|ord|pow|print|property|range|repr|reversed|round|set|setattr|slice|sorted|staticmethod|str|sum|super|tuple|type|vars|zip|__import__)\\b",
+          "name": "support.function.builtin.python"
+        },
+        {
+          "match": "\\b(True|False|None|NotImplemented|Ellipsis)\\b",
+          "name": "constant.language.python"
+        },
+        {
+          "match": "\\b(self|cls)\\b",
+          "name": "variable.language.special.python"
+        }
+      ]
+    },
+    "magic-methods": {
+      "patterns": [
+        {
+          "match": "\\b(__[a-zA-Z_]+__)\\b",
+          "name": "support.function.magic.python"
+        }
+      ]
+    },
+    "numeric-constants": {
+      "patterns": [
+        {
+          "match": "\\b[0-9]+\\.[0-9]*",
+          "name": "constant.numeric.float.python"
+        },
+        {
+          "match": "\\b[0-9]+",
+          "name": "constant.numeric.integer.python"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "match": "(%\\+=|%\\*=|%\\-=|%/=)",
+          "name": "keyword.operator.python"
+        },
+        {
+          "match": "(\\+|\\-|\\*|\\/|%|\\*\\*|//|=|\\+=|\\-=|\\*=|\\/=|==|!=|<=|>=|<|>|&|\\||\\^|~)",
+          "name": "keyword.operator.python"
+        },
+        {
+          "match": "(\\(|\\)|\\[|\\]|\\{|\\}|,|:|\\.)",
+          "name": "punctuation.separator.python"
+        }
+      ]
+    },
+    "method-calls": {
+      "patterns": [
+        {
+          "match": "(\\.)\\s*([a-zA-Z_]\\w*)\\s*(?=\\()",
+          "captures": {
+            "2": { "name": "entity.name.function.member.python" }
           }
         }
       ]
@@ -69,17 +214,41 @@
     "macro-usage": {
       "patterns": [
         {
-          "match": "\\b([a-zA-Z_]\\w*)\\s*\\(",
-          "captures": {
-            "1": { "name": "entity.name.function.pyx" }
-          }
+          "match": "(?<!!)\\b([a-zA-Z_]\\w*)\\s*\\(",
+          "captures": { "1": { "name": "entity.name.function.pyx" } }
         }
       ]
     },
-    "variable-assignment": {
+    "constants": {
       "patterns": [
         {
-          "match": "\\b([a-zA-Z_]\\w*)\\s*(?=(,\\s*[a-zA-Z_]\\w*\\s*)*=[^=])",
+          "match": "\\b([A-Z_][A-Z0-9_]*)\\b",
+          "name": "variable.other.constant.pyx"
+        }
+      ]
+    },
+    "variable-heuristics": {
+      "patterns": [
+        {
+          "match": "\\b([a-zA-Z_]\\w*)\\s*(?=[+\\-*/%&|^@]?=)",
+          "name": "variable.other.readwrite.pyx"
+        },
+        {
+          "begin": "\\b(for)\\b",
+          "beginCaptures": { "1": { "name": "keyword.control.flow.python" } },
+          "end": "\\b(in)\\b",
+          "endCaptures": { "1": { "name": "keyword.control.flow.python" } },
+          "patterns": [
+            { "match": "([a-zA-Z_]\\w*)", "name": "variable.other.loop.pyx" },
+            { "match": ",", "name": "punctuation.separator.pyx" }
+          ]
+        }
+      ]
+    },
+    "generic-variables": {
+      "patterns": [
+        {
+          "match": "\\b([a-zA-Z_]\\w*)\\b",
           "name": "variable.other.readwrite.pyx"
         }
       ]

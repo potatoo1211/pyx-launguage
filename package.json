@@ -2,7 +2,7 @@
   "name": "pyx-launguage",
   "displayName": "Pyextended",
   "description": "Extended_Python_launguage",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "engines": {
     "vscode": "^1.106.1"
   },
