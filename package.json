@@ -2,7 +2,7 @@
   "name": "pyx-launguage",
   "displayName": "Pyextended",
   "description": "Extended_Python_launguage",
-  "version": "0.3.0",
+  "version": "0.5.0",
   "engines": {
     "vscode": "^1.106.1"
   },
@@ -61,6 +61,11 @@
     ],
     "menus": {
       "editor/context": [
+        {
+          "command": "pyx.runOnly",
+          "when": "resourceLangId == pyx",
+          "group": "navigation"
+        },
         {
           "command": "pyx.runAndCopy",
           "when": "resourceLangId == pyx",

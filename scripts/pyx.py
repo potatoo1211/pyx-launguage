@@ -5,6 +5,8 @@ import argparse
 import subprocess
 import base64
 import traceback
+import tokenize
+from io import BytesIO
 
 # ---------------------------------------------------------
 # 定数・設定
@@ -16,6 +18,19 @@ github:
 https://github.com/potatoo1211/pyx-launguage"""
 
 MAX_EXPANSION_DEPTH = 2000
+
+BLOCK_KEYWORDS = {
+    'if', 'elif', 'else', 'for', 'while', 'def', 'class', 
+    'with', 'try', 'except', 'finally', 'async'
+}
+
+STRING_AND_COMMENT_PATTERN = (
+    r'("""(?:[^"\\]|\\.|"(?!"")|""(?!"))*""")|' + 
+    r"('''(?:[^'\\]|\\.|'(?!'')|''(?!'))*''')|" + 
+    r'("(?:[^"\\]|\\.)*")|' + 
+    r"('(?:[^'\\]|\\.)*')|" + 
+    r'(#.*)'
+)
 
 # ---------------------------------------------------------
 # Data Structures
@@ -94,14 +109,24 @@ def smart_split_args(text):
     return [a for a in args if a]
 
 def safe_replace(text, mapping):
-    for k, v in mapping.items():
-        if isinstance(v, list):
-            val_str = ", ".join(map(str, v))
-        else:
-            val_str = str(v)
-        pattern = r'\b' + re.escape(k) + r'\b'
-        text = re.sub(pattern, val_str, text)
-    return text
+    if not mapping: return text
+    keys = sorted(mapping.keys(), key=len, reverse=True)
+    keys_pattern = r'\b(' + '|'.join(map(re.escape, keys)) + r')\b'
+    
+    pattern = f"{STRING_AND_COMMENT_PATTERN}|{keys_pattern}"
+    
+    def sub_func(match):
+        if match.group(1) or match.group(2) or match.group(3) or match.group(4) or match.group(5):
+            return match.group(0)
+        key = match.group(6)
+        if key:
+            val = mapping[key]
+            if isinstance(val, list):
+                return ", ".join(map(str, val))
+            return str(val)
+        return match.group(0)
+
+    return re.sub(pattern, sub_func, text)
 
 def dedent_block(source_lines):
     if not source_lines: return []
@@ -184,51 +209,171 @@ def evaluate_condition(expr):
         return False
 
 def is_index_safe(text, target_idx):
-    in_sq = False; in_dq = False; escape = False
-    for i, c in enumerate(text):
-        if i == target_idx: return not (in_sq or in_dq)
-        if c == '#' and not in_sq and not in_dq: return False
-        if escape: escape = False; continue
-        if c == '\\': escape = True; continue
-        if c == "'" and not in_dq: in_sq = not in_sq
-        elif c == '"' and not in_sq: in_dq = not in_dq
+    for match in re.finditer(STRING_AND_COMMENT_PATTERN, text):
+        if match.start() <= target_idx < match.end():
+            return False
     return True
 
 def split_comment(text):
-    in_sq = False; in_dq = False; escape = False
-    for i, c in enumerate(text):
-        if c == '#' and not in_sq and not in_dq:
-            return text[:i], text[i:] 
-        if escape: escape = False; continue
-        if c == '\\': escape = True; continue
-        if c == "'" and not in_dq: in_sq = not in_sq
-        elif c == '"' and not in_sq: in_dq = not in_dq
+    for match in re.finditer(STRING_AND_COMMENT_PATTERN, text):
+        if match.group(5): # comment group
+            start = match.start()
+            return text[:start], text[start:]
     return text, ""
 
 def process_mod_ops(text, mod_value):
-    if not mod_value:
-        return text
+    if not mod_value: return text
     
     code_part, comment_part = split_comment(text)
-    pattern = r'^(\s*)(.+?)\s*%([+\-*/])=\s*(.+)$'
-    match = re.match(pattern, code_part)
+    mod_expr = f"({mod_value})"
+    
+    # 1. Assignment Operators (tokens not strictly needed but safer, currently regex is acceptable for assignment)
+    # We use regex here because assignment involves indentation and line structure which tokenize might complicate for replacement
+    pattern_assign = r'^(\s*)(.+?)\s*%([+\-*/])=\s*(.+)$'
+    match = re.match(pattern_assign, code_part)
     
     if match:
         indent = match.group(1)
         lhs = match.group(2).strip()
         op = match.group(3)
         rhs = match.group(4).strip()
-        mod_expr = f"({mod_value})"
         
         if op == '/':
             new_code = f"{indent}{lhs}=({lhs}*pow({rhs},{mod_expr}-2,{mod_expr}))%{mod_expr}"
         else:
             new_code = f"{indent}{lhs}=({lhs}{op}({rhs}))%{mod_expr}"
         
-        combined = f"{new_code} {comment_part}" if comment_part else new_code
+        code_part = new_code
+        # FIX: Ensure newline is preserved for assignment cases
+        combined = code_part + comment_part
         return combined.rstrip() + "\n"
+
+    # 2. Binary Operators (Token-based parsing)
+    while True:
+        try:
+            tokens = list(tokenize.tokenize(BytesIO(code_part.encode('utf-8')).readline))
+        except tokenize.TokenError:
+            break
+            
+        target_idx = -1
+        op_char = ''
+        
+        # Find pattern: % [+-*/]
+        for i in range(1, len(tokens) - 1):
+            tok = tokens[i]
+            next_tok = tokens[i+1]
+            if tok.type == tokenize.OP and tok.string == '%':
+                if next_tok.type == tokenize.OP and next_tok.string in ('+', '-', '*', '/'):
+                    target_idx = i
+                    op_char = next_tok.string
+                    break
+        
+        if target_idx == -1:
+            break
+            
+        # --- Identify LHS ---
+        # Scan backward from % to find the start of the expression
+        lhs_start_tok_idx = target_idx - 1
+        nest = 0
+        while lhs_start_tok_idx >= 0:
+            t = tokens[lhs_start_tok_idx]
+            
+            # Skip non-code tokens (though usually not present in single line code except encoding)
+            if t.type in (tokenize.NL, tokenize.NEWLINE, tokenize.ENDMARKER, tokenize.ENCODING, tokenize.COMMENT):
+                if lhs_start_tok_idx == 0: break
+                lhs_start_tok_idx -= 1
+                continue
+            
+            should_stop = False
+            
+            if t.type == tokenize.OP:
+                if t.string in (')', ']', '}'):
+                    nest += 1
+                elif t.string in ('(', '[', '{'):
+                    if nest > 0:
+                        nest -= 1
+                    else:
+                        # Case: fact[i] -> scanning back: ']', 'i', '[' (nest now 0).
+                        # We should NOT stop here, we need to grab 'fact'.
+                        pass 
+                elif t.string == '.':
+                    pass
+                else:
+                    if nest == 0: should_stop = True
+            elif t.type in (tokenize.NAME, tokenize.NUMBER, tokenize.STRING):
+                pass
+            else:
+                # e.g. keywords, usually stop boundary
+                if nest == 0: should_stop = True
+                
+            if should_stop:
+                lhs_start_tok_idx += 1 # Exclude this token
+                break
+                
+            if lhs_start_tok_idx == 0:
+                break
+            lhs_start_tok_idx -= 1
+            
+        if lhs_start_tok_idx < 0: lhs_start_tok_idx = 0
+        
+        # --- Identify RHS ---
+        # Scan forward from op_char to find the end of the expression
+        rhs_start_tok_idx = target_idx + 2
+        rhs_end_tok_idx = rhs_start_tok_idx
+        nest = 0
+        
+        while rhs_end_tok_idx < len(tokens):
+            t = tokens[rhs_end_tok_idx]
+            
+            if t.type in (tokenize.NL, tokenize.NEWLINE, tokenize.ENDMARKER):
+                break
+                
+            is_term_end = False
+            
+            if t.type == tokenize.OP:
+                if t.string in ('(', '[', '{'):
+                    nest += 1
+                elif t.string in (')', ']', '}'):
+                    nest -= 1
+                    if nest < 0: # Unmatched closing -> End of term
+                        is_term_end = True
+                elif nest == 0 and t.string not in ('.'):
+                    # Operator at base level (e.g. +, -)
+                    is_term_end = True
+            
+            if is_term_end:
+                break
+                
+            rhs_end_tok_idx += 1
+            
+            # If we just finished a term (name, number, or closed block), check if there is a suffix
+            if nest == 0:
+                # Peek next token
+                if rhs_end_tok_idx < len(tokens):
+                    nt = tokens[rhs_end_tok_idx]
+                    if nt.type == tokenize.OP and nt.string in ('.', '(', '[', '{'):
+                        continue # It's a suffix, continue scanning
+                break
+        
+        # Extract Text
+        lhs_start_pos = tokens[lhs_start_tok_idx].start[1]
+        lhs_end_pos = tokens[target_idx].start[1]
+        rhs_start_pos = tokens[rhs_start_tok_idx].start[1]
+        rhs_end_pos = tokens[rhs_end_tok_idx-1].end[1]
+        
+        lhs_text = code_part[lhs_start_pos:lhs_end_pos].strip()
+        rhs_text = code_part[rhs_start_pos:rhs_end_pos].strip()
+        
+        # Replace
+        if op_char == '/':
+             repl = f"(({lhs_text})*pow({rhs_text},{mod_expr}-2,{mod_expr}))%{mod_expr}"
+        else:
+             repl = f"(({lhs_text}){op_char}({rhs_text}))%{mod_expr}"
+             
+        code_part = code_part[:lhs_start_pos] + repl + code_part[rhs_end_pos:]
     
-    return text
+    combined = f"{code_part}{comment_part}" if comment_part else code_part
+    return combined.rstrip() + "\n"
 
 def detect_recursion(source_lines):
     scope_stack = []
@@ -253,6 +398,57 @@ def detect_recursion(source_lines):
                 if is_index_safe(text, match.start()):
                     return True
     return False
+
+def expand_oneliner(sl):
+    text = sl.content
+    stripped = text.strip()
+    match_kw = re.match(r'^([a-zA-Z_]\w*)', stripped)
+    if not match_kw or match_kw.group(1) not in BLOCK_KEYWORDS:
+        return [sl]
+
+    indent_match = re.match(r'^(\s*)', text)
+    base_indent = indent_match.group(1) if indent_match else ""
+    
+    depth = 0
+    split_idx = -1
+    
+    in_sq = False; in_dq = False; escape = False
+    scan_start = len(base_indent)
+    
+    for i in range(scan_start, len(text)):
+        c = text[i]
+        if escape: escape = False; continue
+        if c == '\\': escape = True; continue
+        
+        if in_sq:
+            if c == "'": in_sq = False
+        elif in_dq:
+            if c == '"': in_dq = False
+        else:
+            if c == "'": in_sq = True
+            elif c == '"': in_dq = True
+            elif c in '([{': depth += 1
+            elif c in ')]}': depth -= 1
+            elif c == '#' and depth == 0: break
+            elif c == ':' and depth == 0:
+                rest = text[i+1:].strip()
+                if rest and not rest.startswith('#'):
+                    split_idx = i
+                    break
+    
+    if split_idx != -1:
+        head = text[:split_idx+1].rstrip()
+        tail = text[split_idx+1:].strip()
+        
+        line1 = SourceLine(head + "\n", sl.filename, sl.lineno)
+        
+        if tail:
+            tail_sl = SourceLine(base_indent + "    " + tail + "\n", sl.filename, sl.lineno)
+            return [line1] + expand_oneliner(tail_sl)
+        else:
+            return [line1]
+        
+    return [sl]
 
 # ---------------------------------------------------------
 # Definition Class
@@ -314,6 +510,8 @@ class PyxTranspiler:
         self.active_definitions = {}
         self.is_exec_mode = is_exec_mode
         self.mod_value = None
+        self.indent_stack = []
+        self.current_extra_indent = 0 
 
     def load_file(self, filepath):
         if not os.path.exists(filepath): return None
@@ -350,28 +548,70 @@ class PyxTranspiler:
         main_lines = []
         current_ns = None
         buffer = []
+        
+        def parse_params(p_str):
+            p_list = []
+            if not p_str: return p_list
+            raw = smart_split_args(p_str)
+            for r in raw:
+                if '=' in r:
+                    n, d = r.split('=', 1)
+                    p_list.append({'name': n.strip(), 'default': d.strip()})
+                else:
+                    p_list.append({'name': r.strip(), 'default': None})
+            return p_list
+
         for sl in source_lines:
             sline = sl.content.strip()
-            if sline.startswith('$namespace'):
-                parts = sline.split()
-                current_ns = parts[1] if len(parts) > 1 else "unknown"
+            
+            match_ns = re.match(r'^\$namespace\s+([a-zA-Z0-9_]+)(?:\((.*)\))?$', sline)
+            if match_ns:
+                current_ns = match_ns.group(1)
+                p_str = match_ns.group(2)
+                
+                if current_ns not in self.namespaces:
+                    self.namespaces[current_ns] = {'params': [], 'lines': []}
+                
+                if p_str is not None:
+                    self.namespaces[current_ns]['params'] = parse_params(p_str)
+                
                 buffer = []
                 continue 
+
             if sline == '$' and current_ns:
-                if current_ns not in self.namespaces: self.namespaces[current_ns] = []
-                self.namespaces[current_ns].extend(buffer)
+                if current_ns in self.namespaces:
+                    self.namespaces[current_ns]['lines'].extend(buffer)
+                else:
+                    self.namespaces[current_ns] = {'params': [], 'lines': buffer}
                 current_ns = None
                 buffer = []
                 continue 
-            if sline.startswith('$name'):
+            
+            match_name = re.match(r'^\$name\s+([a-zA-Z0-9_]+)(?:\((.*)\))?\s+(.*)$', sline)
+            if match_name:
+                ns_name = match_name.group(1)
+                p_str = match_name.group(2)
+                content_str = match_name.group(3)
+                
+                if ns_name not in self.namespaces:
+                    self.namespaces[ns_name] = {'params': [], 'lines': []}
+                
+                if p_str is not None:
+                     self.namespaces[ns_name]['params'] = parse_params(p_str)
+
+                self.namespaces[ns_name]['lines'].append(SourceLine(content_str + "\n", sl.filename, sl.lineno))
+                continue
+            
+            if sline.startswith('$name') and not match_name:
                 parts = sline.split(None, 2)
                 if len(parts) >= 3:
                     ns_name = parts[1].strip()
                     content_str = parts[2].strip()
                     if ns_name not in self.namespaces:
-                        self.namespaces[ns_name] = []
-                    self.namespaces[ns_name].append(SourceLine(content_str + "\n", sl.filename, sl.lineno))
+                        self.namespaces[ns_name] = {'params': [], 'lines': []}
+                    self.namespaces[ns_name]['lines'].append(SourceLine(content_str + "\n", sl.filename, sl.lineno))
                 continue
+
             if current_ns: buffer.append(sl)
             else: main_lines.append(sl)
         return main_lines
@@ -451,7 +691,6 @@ class PyxTranspiler:
                     if is_index_safe(line_content, match.start()):
                         return True, self.expand_body(definition, [], sl, name)
             else:
-                # !method detection
                 if definition.placeholder or definition.placeholder_vars or definition.placeholder_is_variadic: 
                     obj_pattern = r'((?:\([^)]*\)|[a-zA-Z0-9_]+(?:\[[^\]]*\])*))'
                     pattern = obj_pattern + re.escape('.') + re.escape(name) + r'\s*\('
@@ -521,13 +760,17 @@ class PyxTranspiler:
         indent_match = re.match(r'^(\s*)', original_sl.content)
         base_indent = indent_match.group(1) if indent_match else ""
         
+        if len(base_indent) >= self.current_extra_indent:
+            raw_base_indent = base_indent[self.current_extra_indent:]
+        else:
+            raw_base_indent = base_indent 
+
         replacements = {}
         if caller_obj:
             if definition.placeholder_is_variadic and definition.placeholder:
                 val = caller_obj.strip()
                 if val.startswith('(') and val.endswith(')'):
                     val = val[1:-1]
-                # ★修正: 括弧の中身をリスト化する ( "A,B,C" -> ["A","B","C"] )
                 replacements[definition.placeholder] = smart_split_args(val)
             elif definition.placeholder_vars:
                 val = caller_obj.strip()
@@ -572,9 +815,17 @@ class PyxTranspiler:
         if not is_whole_line and len(valid_lines) == 1:
             body_txt = valid_lines[0].content.strip()
             new_content = original_sl.content.replace(match_str, body_txt)
+            
+            if new_content.startswith(" " * self.current_extra_indent):
+                new_content = new_content[self.current_extra_indent:]
+            
             return [SourceLine(new_content, original_sl.filename, original_sl.lineno)]
+        
         elif not is_whole_line and len(valid_lines) == 0:
             new_content = original_sl.content.replace(match_str, "")
+            if new_content.startswith(" " * self.current_extra_indent):
+                new_content = new_content[self.current_extra_indent:]
+            
             if not new_content.strip(): return []
             return [SourceLine(new_content, original_sl.filename, original_sl.lineno)]
         
@@ -583,7 +834,7 @@ class PyxTranspiler:
         dedented_lines = dedent_block(final_lines)
         expanded_lines = []
         for body_sl in dedented_lines:
-            new_content = base_indent + body_sl.content.rstrip('\n') + "\n"
+            new_content = raw_base_indent + body_sl.content.rstrip('\n') + "\n"
             expanded_lines.append(SourceLine(new_content, body_sl.filename, body_sl.lineno))
         return expanded_lines
 
@@ -675,7 +926,7 @@ class PyxTranspiler:
             if definitions['normal']: self.active_definitions[name]['normal'] = definitions['normal']
             if definitions['debug']: self.active_definitions[name]['debug'] = definitions['debug']
         if 'default' in self.namespaces:
-            defs, raw = self.parse_namespace_content(self.namespaces['default'])
+            defs, raw = self.parse_namespace_content(self.namespaces['default']['lines'])
             for name, d in defs.items():
                 if name not in self.active_definitions: self.active_definitions[name] = {'normal': None, 'debug': None}
                 if d['normal']: self.active_definitions[name]['normal'] = d['normal']
@@ -686,24 +937,69 @@ class PyxTranspiler:
         cases_indent_level = 0
         i = 0
         expansion_counter = 0
+        self.indent_stack = []
+        self.current_extra_indent = 0
 
         while i < len(raw_code_lines):
             sl = raw_code_lines[i]
             sline = sl.content.strip()
 
+            curr_indent = get_indent_length(sl.content)
+            while self.indent_stack and curr_indent <= self.indent_stack[-1]['base']:
+                self.indent_stack.pop()
+
+            total_extra = sum(x['extra'] for x in self.indent_stack)
+            self.current_extra_indent = total_extra 
+            
+            if total_extra > 0 and sline:
+                sl.content = (" " * total_extra) + sl.content
+                sline = sl.content.strip()
+
             if sline.startswith('$using'):
                 parts = sline.split(None, 1)
                 if len(parts) > 1:
-                    target_ns_list = [ns.strip() for ns in parts[1].split(',')]
+                    target_refs = smart_split_args(parts[1])
                     all_raw_codes = []
-                    for target_ns in target_ns_list:
+                    for ref in target_refs:
+                        match_ref = re.match(r'^([a-zA-Z0-9_]+)(?:\((.*)\))?$', ref)
+                        if not match_ref: continue
+                        target_ns = match_ref.group(1)
+                        args_str = match_ref.group(2)
+
                         if target_ns in self.namespaces:
-                            defs, raw_code = self.parse_namespace_content(self.namespaces[target_ns])
+                            ns_data = self.namespaces[target_ns]
+                            lines = ns_data['lines']
+                            params = ns_data['params']
+                            
+                            replacements = {}
+                            if params:
+                                call_args = smart_split_args(args_str) if args_str else []
+                                used = 0
+                                for p in params:
+                                    val = None
+                                    if used < len(call_args):
+                                        val = call_args[used]
+                                        used += 1
+                                    elif p['default'] is not None:
+                                        val = p['default']
+                                    
+                                    if val is not None:
+                                        replacements[p['name']] = val
+                            
+                            processed_lines = []
+                            for l in lines:
+                                txt = l.content
+                                if replacements:
+                                    txt = safe_replace(txt, replacements)
+                                processed_lines.append(SourceLine(txt, l.filename, l.lineno))
+
+                            defs, raw_code = self.parse_namespace_content(processed_lines)
                             for name, d in defs.items():
                                 if name not in self.active_definitions: self.active_definitions[name] = {'normal': None, 'debug': None}
                                 if d['normal']: self.active_definitions[name]['normal'] = d['normal']
                                 if d['debug']: self.active_definitions[name]['debug'] = d['debug']
                             all_raw_codes.extend(raw_code)
+                    
                     if all_raw_codes:
                         raw_code_lines[i+1:i+1] = all_raw_codes
                 i += 1
@@ -727,7 +1023,6 @@ class PyxTranspiler:
             
             expansion_counter = 0
             
-            # ?デバッグ行
             debug_match = re.match(r'^(\s*)\?(.*)$', sl.content)
             if debug_match:
                 if not self.is_exec_mode:
@@ -756,15 +1051,29 @@ class PyxTranspiler:
             
             processed_content = process_mod_ops(sl.content, self.mod_value)
             sl_to_add = SourceLine(processed_content, sl.filename, sl.lineno)
+            
+            expanded_oneliners = expand_oneliner(sl_to_add)
+            
+            if expanded_oneliners:
+                last_line = expanded_oneliners[-1]
+                last_line_stripped = last_line.content.strip()
+                last_line_indent = get_indent_length(last_line.content)
+                
+                if last_line_stripped.endswith(':') and not last_line_stripped.startswith('#'):
+                    first_line_indent = get_indent_length(expanded_oneliners[0].content)
+                    diff = last_line_indent - first_line_indent
+                    if diff > 0:
+                        self.indent_stack.append({'base': curr_indent, 'extra': diff})
 
             if cases_indent_level > 0:
-                if sl_to_add.content.strip():
-                    new_content = ("    " * cases_indent_level) + sl_to_add.content
-                    final_sl_lines.append(SourceLine(new_content, sl_to_add.filename, sl_to_add.lineno))
-                else:
-                    final_sl_lines.append(sl_to_add)
+                for oneliner_sl in expanded_oneliners:
+                    if oneliner_sl.content.strip():
+                        new_content = ("    " * cases_indent_level) + oneliner_sl.content
+                        final_sl_lines.append(SourceLine(new_content, oneliner_sl.filename, oneliner_sl.lineno))
+                    else:
+                        final_sl_lines.append(oneliner_sl)
             else:
-                final_sl_lines.append(sl_to_add)
+                final_sl_lines.extend(expanded_oneliners)
             i += 1
         
         return final_sl_lines

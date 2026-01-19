@@ -33,24 +33,46 @@
           },
           "end": "$",
           "patterns": [
+            {
+              "begin": "\\(",
+              "beginCaptures": { "0": { "name": "punctuation.definition.parameters.begin.python" } },
+              "end": "\\)",
+              "endCaptures": { "0": { "name": "punctuation.definition.parameters.end.python" } },
+              "patterns": [
+                { "include": "#numeric-constants" },
+                { "include": "#constants" },
+                { "include": "#python-builtins" },
+                { "include": "#operators" },
+                { "include": "#method-calls" },
+                { "include": "#variable-heuristics" },
+                { "include": "#generic-variables" },
+                { "match": ",", "name": "punctuation.separator.python" }
+              ]
+            },
             { "match": "([a-zA-Z_]\\w*)", "name": "entity.name.namespace.pyx" },
             { "match": ",", "name": "punctuation.separator.pyx" }
           ]
         },
         {
-          "match": "^\\s*(\\$)(namespace)\\b(?:\\s+([\\w]+))?",
+          "match": "^\\s*(\\$)(namespace)\\b\\s+([a-zA-Z_]\\w*)(?:\\s*(\\()([^)]*)(\\)))?",
           "captures": {
             "1": { "name": "keyword.control.import.pyx" },
             "2": { "name": "keyword.control.import.pyx" },
-            "3": { "name": "entity.name.namespace.pyx" }
+            "3": { "name": "entity.name.namespace.pyx" },
+            "4": { "name": "punctuation.definition.parameters.begin.python" },
+            "5": { "name": "variable.parameter.pyx" },
+            "6": { "name": "punctuation.definition.parameters.end.python" }
           }
         },
         {
-          "match": "^\\s*(\\$)(name)\\b\\s+([a-zA-Z_]\\w*)",
+          "match": "^\\s*(\\$)(name)\\b\\s+([a-zA-Z_]\\w*)(?:\\s*(\\()([^)]*)(\\)))?",
           "captures": {
             "1": { "name": "keyword.control.import.pyx" },
             "2": { "name": "keyword.control.import.pyx" },
-            "3": { "name": "entity.name.namespace.pyx" }
+            "3": { "name": "entity.name.namespace.pyx" },
+            "4": { "name": "punctuation.definition.parameters.begin.python" },
+            "5": { "name": "variable.parameter.pyx" },
+            "6": { "name": "punctuation.definition.parameters.end.python" }
           }
         },
         {
@@ -188,7 +210,7 @@
     "operators": {
       "patterns": [
         {
-          "match": "(%\\+=|%\\*=|%\\-=|%/=)",
+          "match": "(%\\+=|%\\*=|%\\-=|%/=|%\\+|%\\-|%\\*|%/)",
           "name": "keyword.operator.python"
         },
         {
